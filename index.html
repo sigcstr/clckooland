@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Joiner</title>
+<style>
+:root{--S:min(100vw,100vh)}
+html,body{height:100%;margin:0;background:#fff;overflow:hidden;font-family:"Pretendard",-apple-system,"Noto Sans KR",sans-serif}
+#stage{position:fixed;inset:0;perspective:calc(var(--S)*1.6);display:flex;align-items:center;justify-content:center;touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}
+#stage.drag{cursor:grabbing}
+#world{position:relative;width:0;height:0;transform-style:preserve-3d}
+.tile{position:absolute;left:0;top:0}
+.f{position:absolute;inset:0;overflow:hidden;box-shadow:0 0 0 1px rgba(0,0,0,.06),0 4px 14px rgba(0,0,0,.12);cursor:pointer}
+.f img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;-webkit-user-drag:none}
+#full{position:fixed;inset:0;background:#fff;display:none;z-index:3}
+#full.on{display:block}
+#cv{width:100%;height:100%;display:block;touch-action:none;cursor:crosshair}
+#fr{position:fixed;display:none;border:2px dashed #fff;outline:1px solid #222;pointer-events:none}
+#x{position:absolute;top:calc(14px + env(safe-area-inset-top,0px));right:16px;width:40px;height:40px;border:0;border-radius:50%;background:rgba(255,255,255,.9);color:#222;font-size:20px;line-height:40px;cursor:pointer;box-shadow:0 1px 6px rgba(0,0,0,.25)}
+#cam{position:fixed;left:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));width:150px;border-radius:10px;transform:scaleX(-1);display:none;z-index:6;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+#hint{position:fixed;left:0;right:0;bottom:calc(18px + env(safe-area-inset-bottom,0px));text-align:center;color:#666;font-size:13px;pointer-events:none;transition:opacity .6s;z-index:6;text-shadow:0 0 6px #fff,0 0 6px #fff}
+</style></head><body>
+<div id="stage"><div id="world"></div></div>
+<div id="full"><canvas id="cv"></canvas><button id="x" aria-label="닫기">✕</button></div>
+<div id="fr"></div>
+<video id="cam" playsinline muted></video>
+<div id="hint"></div>
+<script>
+const IMGS=["images/01.jpg", "images/02.jpg", "images/03.jpg", "images/04.jpg", "images/05.jpg", "images/06.jpg", "images/07.jpg", "images/08.jpg", "images/09.jpg", "images/10.jpg", "images/11.jpg", "images/12.jpg", "images/13.jpg"];
+const $=i=>document.getElementById(i),world=$('world'),stage=$('stage'),hint=$('hint'),full=$('full'),cv=$('cv'),cx=cv.getContext('2d'),fr=$('fr'),cam=$('cam');
+const bs=document.createElement('canvas'),bx=bs.getContext('2d');
+const n=IMGS.length,Sp=()=>Math.min(innerWidth,innerHeight),S=v=>`calc(var(--S)*${v.toFixed(4)})`,DPR=Math.min(devicePixelRatio||1,2);
+const pics=IMGS.map(s=>{const i=new Image();i.src=s;return i});
+let ht;function say(t){hint.textContent=t;hint.style.opacity=1;clearTimeout(ht);ht=setTimeout(()=>hint.style.opacity=0,2800)}
+say('드래그해서 돌려보세요 · 사진을 누르면 크게 보여요');
+let seed=11;const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;
+// ── 느슨한 정팔면체 덩어리
+const R=.52,order=[],TL=[];
+for(let i=0;i<32;i++)order.push(i%n);
+for(let i=order.length-1;i>0;i--){const j=Math.floor(rnd()*(i+1));[order[i],order[j]]=[order[j],order[i]]}
+let ti=0;
+for(const sx of[-1,1])for(const sy of[-1,1])for(const sz of[-1,1]){
+  const V=[[sx*R,0,0],[0,sy*R,0],[0,0,sz*R]],c=[0,1,2].map(a=>(V[0][a]+V[1][a]+V[2][a])/3),nr=[sx,sy,sz].map(v=>v/Math.sqrt(3));
+  for(let k=0;k<4;k++){
+    const rs=.92+rnd()*.3+(rnd()<.12?.25:0);
+    const p=(k<3?c.map((cv,a)=>cv+(V[k][a]-cv)*.52):c.slice()).map(v=>v*rs+(rnd()-.5)*.13);
+    let[nx,ny,nz]=nr.map(v=>v+(rnd()-.5)*.8);const m=Math.hypot(nx,ny,nz);nx/=m;ny/=m;nz/=m;
+    const yaw=Math.atan2(nx,nz)*180/Math.PI,pit=-Math.asin(ny)*180/Math.PI,roll=(rnd()-.5)*180;
+    const ar=.72+rnd()*.7,L=.28+rnd()*.18,w=ar>=1?L:L*ar,h=ar>=1?L/ar:L,idx=order[ti++];
+    const el=document.createElement('div');el.className='tile';
+    el.style.width=S(w);el.style.height=S(h);el.style.margin=`${S(-h/2)} 0 0 ${S(-w/2)}`;
+    const tr=`translate3d(${S(p[0])},${S(p[1])},${S(p[2])}) rotateY(${yaw.toFixed(1)}deg) rotateX(${pit.toFixed(1)}deg) rotateZ(${roll.toFixed(1)}deg)`;el.style.transform=tr;
+    const f=document.createElement('div');f.className='f';
+    const im=new Image();im.src=IMGS[idx];im.alt='';im.draggable=false;
+    const op=`${(rnd()*100).toFixed(0)}% ${(rnd()*100).toFixed(0)}%`,tf=`scale(${(1+rnd()*.5).toFixed(2)})`;im.style.objectPosition=op;im.style.transform=tf;
+    f.appendChild(im);el.appendChild(f);el._t={p,yaw,pit,roll,w,h,idx,op,tf,tr,opx:parseFloat(op),opy:parseFloat(op.split(' ')[1]),scv:parseFloat(tf.slice(6))};world.appendChild(el);TL.push(el);
+  }
+}
+// ── 카메라 상태 / 트윈
+const st={rx:-12,ry:20,rz:0,tx:0,ty:0,tz:0,zoom:.72},K=['rx','ry','rz','tx','ty','tz','zoom'];
+let vx=0,vy=0,drag=false,lx=0,ly=0,idle=0,mode='free',saved=null,anim=null,sx0=0,sy0=0,clickOK=false,cur=0;
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const wrap=a=>((a+180)%360+360)%360-180,DUR=820;
+function bez(x1,y1,x2,y2){const c3=3*x1,b3=3*(x2-x1)-c3,a3=1-c3-b3,cy=3*y1,by=3*(y2-y1)-cy,ay=1-cy-by,
+  X=t=>((a3*t+b3)*t+c3)*t,Y=t=>((ay*t+by)*t+cy)*t,dX=t=>(3*a3*t+2*b3)*t+c3;
+  return x=>{if(x<=0)return 0;if(x>=1)return 1;let t=x;
+    for(let i=0;i<8;i++){const d=X(t)-x,g=dX(t);if(Math.abs(d)<1e-5||Math.abs(g)<1e-6)break;t-=d/g}
+    if(!(t>=0&&t<=1)||Math.abs(X(t)-x)>1e-4){let lo=0,hi=1;t=x;while(hi-lo>1e-5){X(t)<x?lo=t:hi=t;t=(lo+hi)/2}}
+    return Y(t)}}
+const ease=bez(.7,0,.2,1);
+function apply(){world.style.transform=`scale(${st.zoom}) rotateZ(${st.rz}deg) rotateX(${st.rx}deg) rotateY(${st.ry}deg) translate3d(${st.tx}px,${st.ty}px,${st.tz}px)`}
+function tween(to,dur,done,ms){const from={...st};['rx','ry','rz'].forEach(k=>to[k]=from[k]+wrap(to[k]-from[k]));anim={from,to,t0:null,dur,done,ms:ms||[]}}
+// ── 개별 이미지로 이동 (페이드 없이 바로 전환)
+let fEl=null;
+// 타일 상태(S 단위): 크기·크롭 위치·확대·앞으로 튀어나오는 깊이
+const baseK=o=>({w:o.w,h:o.h,ox:o.opx,oy:o.opy,sc:o.scv,z:0}),
+  heroK=o=>{const vr=innerWidth/innerHeight,tw=Math.sqrt(o.w*o.h*vr);return{w:tw,h:tw/vr,ox:50,oy:50,sc:1,z:.02}}, // 화면 비율 + 가운데 크롭 = 원본 화면과 동일한 모습
+  lerpK=(a,b,e)=>({w:a.w+(b.w-a.w)*e,h:a.h+(b.h-a.h)*e,ox:a.ox+(b.ox-a.ox)*e,oy:a.oy+(b.oy-a.oy)*e,sc:a.sc+(b.sc-a.sc)*e,z:a.z+(b.z-a.z)*e});
+function applyTile(el,k,px){const im=el.firstChild.firstChild,s=Sp(),o=el._t,L=px?v=>`${(v*s).toFixed(2)}px`:v=>S(v);
+  el.style.width=L(k.w);el.style.height=L(k.h);el.style.margin=`${L(-k.h/2)} 0 0 ${L(-k.w/2)}`;
+  im.style.objectPosition=`${k.ox.toFixed(2)}% ${k.oy.toFixed(2)}%`;im.style.transform=`scale(${k.sc.toFixed(4)})`;
+  el.style.transform=k.z>1e-5?o.tr+` translateZ(${L(k.z)})`:o.tr}
+function goTo(el,first){
+  if(first)saved={...st};
+  const prev=fEl;fEl=el;mode='anim';vx=vy=0;endStroke();full.classList.remove('on');cur=TL.indexOf(el);
+  const o=el._t,s=Sp(),vr=innerWidth/innerHeight,tw=Math.sqrt(o.w*o.h*vr),P0=1.6*s,nu=.02*s,im=pics[o.idx];
+  const start=()=>{prep(o.idx); // 원본 캔버스를 이동 시작 전에 미리 그려둬서 도착 순간 끊김이 없게
+    const ms=[{el,from:baseK(o),to:heroK(o)}];if(prev&&prev!==el)ms.push({el:prev,from:heroK(prev._t),to:baseK(prev._t)});
+    tween({rx:-o.pit,ry:-o.yaw,rz:-o.roll,tx:-o.p[0]*s,ty:-o.p[1]*s,tz:-o.p[2]*s,zoom:innerWidth*P0/(tw*s*P0+innerWidth*nu)},DUR,
+      ()=>{mode='focus';reveal();if(fl&&!goTo.h){goTo.h=1;say('눈을 깜빡이면 글리치가 생겨요')}},ms)};
+  (im.decode?im.decode().catch(()=>{}):Promise.resolve()).then(start)}
+function nav(d){if(mode==='focus')goTo(TL[(cur+d+TL.length)%TL.length],false)}
+function closeFull(){if(mode!=='focus')return;endStroke();mode='anim';full.classList.remove('on');fr.style.display='none';
+  const el=fEl;fEl=null;tween({...saved},DUR,()=>{mode='free';idle=0;vx=vy=0},el?[{el,from:heroK(el._t),to:baseK(el._t)}]:[])} // 같은 화면에서 축소되며 3D로 복귀
+function focusCenter(){
+  const f=document.elementsFromPoint(innerWidth/2,innerHeight/2).find(x=>x.classList&&x.classList.contains('f'));let el=f&&f.parentNode;
+  if(!el){let b=1e9;TL.forEach(t=>{const r=t.getBoundingClientRect(),d=Math.hypot(r.left+r.width/2-innerWidth/2,r.top+r.height/2-innerHeight/2);if(d<b){b=d;el=t}})}
+  goTo(el,true)}
+// ── 편집 캔버스 (원본 해상도로 화면 비율에 꽉 채움)
+let W=0,H=0;
+function prep(idx){
+  W=cv.width=bs.width=Math.round(innerWidth*DPR);H=cv.height=bs.height=Math.round(innerHeight*DPR);
+  const im=pics[idx],s=Math.max(W/im.naturalWidth,H/im.naturalHeight),w=im.naturalWidth*s,h=im.naturalHeight*s;
+  cx.drawImage(im,(W-w)/2,(H-h)/2,w,h);bx.drawImage(cv,0,0)}
+const reveal=()=>full.classList.add('on');
+const commit=()=>bx.drawImage(cv,0,0);
+function stretch(a,f,vert){cx.drawImage(bs,0,0);
+  if(vert){const y=Math.min(H-1,Math.max(0,a|0));cx.drawImage(bs,0,y,W,1,0,Math.min(a,f),W,Math.abs(f-a)+1)}
+  else{const x=Math.min(W-1,Math.max(0,a|0));cx.drawImage(bs,x,0,1,H,Math.min(a,f),0,Math.abs(f-a)+1,H)}}
+// ── 글리치 효과: 작은 정사각형 안을 JPEG 깨진 듯한 저화질 모자이크로 (블록 평균색 + 어긋난 블록 + 가로 번짐)
+const tc=document.createElement('canvas'),tx=tc.getContext('2d');tc.width=tc.height=1;
+const defSize=()=>Math.round(Math.min(W,H)*.15); // 짧은 변의 약 15% (너무 작지 않게)
+let glBusy=false;
+const rg=(a,b)=>a+Math.random()*(b-a);
+function avgFill(sx,sy,w,h,dx,dy,dw,dh){ // 영역 평균색으로 한 칸을 채움
+  sx=Math.max(0,Math.min(W-w,sx));sy=Math.max(0,Math.min(H-h,sy));
+  tx.imageSmoothingQuality='high';tx.drawImage(bs,sx,sy,w,h,0,0,1,1);cx.drawImage(tc,0,0,1,1,dx,dy,dw,dh)}
+function glitchFrame(x,y,s){
+  const n=Math.random()<.5?6:8,c=s/n;
+  cx.save();cx.beginPath();cx.rect(x,y,s,s);cx.clip();cx.imageSmoothingEnabled=false;
+  for(let j=0;j<n;j++)for(let i=0;i<n;i++){
+    const dx=x+i*c,dy=y+j*c,sh=Math.random()<.3?Math.round(rg(-1.5,1.5)*c):0, // 일부 블록은 원본 위치에서 어긋남
+      sj=Math.random()<.15?Math.round(rg(-1,1)*c):0;
+    if(Math.random()<.25){const h=c/2;for(let b=0;b<4;b++)avgFill(dx+(b%2)*h+sh,dy+((b/2)|0)*h+sj,h,h,dx+(b%2)*h,dy+((b/2)|0)*h,h+.5,h+.5)} // 더 잘게 쪼갠 블록
+    else avgFill(dx+sh,dy+sj,c,c,dx,dy,c+.5,c+.5)}
+  for(let k=0;k<2;k++){ // 한 줄을 가로로 길게 늘린 번짐
+    const bh=Math.max(3,Math.round(c*rg(.25,.7))),by=Math.round(rg(0,s-bh)),sx=Math.round(rg(0,W-1));
+    cx.drawImage(bs,sx,Math.min(H-bh,y+by),1,bh,x,y+by,s,bh)}
+  if(Math.random()<.5){ // 회색 깨진 블록 + 어두운 점
+    const gw=c*rg(1.2,2.2),gh=c*rg(.8,1.3),gx0=x+rg(0,s-gw),gy0=y+rg(0,s-gh);
+    cx.fillStyle='rgb(228,228,228)';cx.fillRect(gx0,gy0,gw,gh);cx.fillStyle='rgb(130,130,130)';
+    for(let q=0;q<3;q++)cx.fillRect(gx0+rg(0,gw-c*.3),gy0+rg(0,gh-c*.3),c*.3,c*.3)}
+  cx.restore()}
+function glitch(x,y,s){
+  if(glBusy||!W)return;
+  s=Math.round(Math.min(s,W,H));x=Math.round(Math.max(0,Math.min(W-s,x)));y=Math.round(Math.max(0,Math.min(H-s,y)));
+  glBusy=true;const t0=performance.now();
+  (function f(now){glitchFrame(x,y,s);
+    if(now-t0<360)setTimeout(()=>requestAnimationFrame(f),60); // 깨진 블록이 바뀌며 깜빡이다 마지막 모습으로 고정
+    else{commit();glBusy=false}})(t0)}
+function randomGlitch(){const s=Math.round(defSize()*(.85+Math.random()*.4));glitch(Math.random()*(W-s),Math.random()*(H-s),s)}
+const frame=(x,y,w,h)=>{fr.style.cssText=`display:block;left:${x}px;top:${y}px;width:${w}px;height:${h}px`};
+// 마우스 편집: 드래그=스트레치, Shift+드래그(또는 Shift+클릭)=글리치 정사각형
+let ms=null;
+cv.addEventListener('pointerdown',e=>{ms={x:e.clientX,y:e.clientY,axis:null};cv.setPointerCapture(e.pointerId)});
+cv.addEventListener('pointermove',e=>{if(!ms)return;const dx=e.clientX-ms.x,dy=e.clientY-ms.y;
+  if(e.shiftKey){const sd=Math.max(Math.abs(dx),Math.abs(dy));ms.r=[dx>=0?ms.x:ms.x-sd,dy>=0?ms.y:ms.y-sd,sd,sd];frame(...ms.r);return}
+  if(ms.axis===null&&Math.hypot(dx,dy)>8)ms.axis=Math.abs(dy)>Math.abs(dx);
+  if(ms.axis!==null)stretch((ms.axis?ms.y:ms.x)*DPR,(ms.axis?e.clientY:e.clientX)*DPR,ms.axis)});
+cv.addEventListener('pointerup',e=>{if(!ms)return;
+  if(ms.r&&ms.r[2]>=30)glitch(ms.r[0]*DPR,ms.r[1]*DPR,ms.r[2]*DPR);
+  else if(e.shiftKey||ms.r){const s=defSize();glitch(ms.x*DPR-s/2,ms.y*DPR-s/2,s)}
+  else commit();
+  fr.style.display='none';ms=null});
+$('x').addEventListener('click',closeFull);
+addEventListener('keydown',e=>{if(e.key==='Escape')closeFull();if(e.key==='ArrowRight')nav(1);if(e.key==='ArrowLeft')nav(-1)});
+// ── 마우스/터치: 회전·줌·클릭
+const pts=new Map();let pd=0;
+stage.addEventListener('pointerdown',e=>{
+  if(mode!=='free')return;stage.setPointerCapture(e.pointerId);pts.set(e.pointerId,e);
+  if(pts.size===1){drag=true;lx=sx0=e.clientX;ly=sy0=e.clientY;vx=vy=0;clickOK=true;stage.classList.add('drag');hint.style.opacity=0}
+  else{clickOK=false;const[a,b]=[...pts.values()];pd=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)}});
+stage.addEventListener('pointermove',e=>{
+  if(!pts.has(e.pointerId)||mode!=='free')return;pts.set(e.pointerId,e);
+  if(pts.size===2){const[a,b]=[...pts.values()],d=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);st.zoom=Math.min(2.2,Math.max(.4,st.zoom*d/pd));pd=d;return}
+  if(!drag)return;if(Math.hypot(e.clientX-sx0,e.clientY-sy0)>6)clickOK=false;
+  const dx=e.clientX-lx,dy=e.clientY-ly;lx=e.clientX;ly=e.clientY;vy=dx*.4;vx=-dy*.4;st.ry+=vy;st.rx+=vx});
+const up=e=>{
+  if(!pts.has(e.pointerId))return;const single=pts.size===1;pts.delete(e.pointerId);
+  if(pts.size===0){drag=false;stage.classList.remove('drag');idle=0;
+    if(single&&clickOK&&mode==='free'){const f=document.elementsFromPoint(e.clientX,e.clientY).find(x=>x.classList&&x.classList.contains('f'));if(f)goTo(f.parentNode,true)}}
+  else{const p=[...pts.values()][0];lx=p.clientX;ly=p.clientY}};
+stage.addEventListener('pointerup',up);stage.addEventListener('pointercancel',up);
+stage.addEventListener('wheel',e=>{e.preventDefault();if(mode!=='free')return;st.zoom=Math.min(2.2,Math.max(.4,st.zoom*(e.deltaY<0?1.06:.94)))},{passive:false});
+// ── 손 제스처
+const G={tip:[],pin:[],sw:[],cool:0,fist:0,E:null,hist:[],eT:0,blink:{closed:false,t:0}};
+function endStroke(){if(G.E){commit();G.E=null}}
+function gesture(HS){
+  const P=HS.map(L=>{const m=L.map(p=>({x:1-p.x,y:p.y})),D=(a,b)=>Math.hypot(m[a].x-m[b].x,m[a].y-m[b].y),sz=D(0,9)||.01,
+    e=[[8,6],[12,10],[16,14],[20,18]].map(([t,q])=>D(t,0)>D(q,0)*1.15);
+    return{m,e,n:e.filter(Boolean).length,w:D(5,17)/sz,edge:D(5,17)/sz<.55,pinch:D(4,8)/sz,L:e[0]&&!e[2]&&!e[3]&&D(4,5)/sz>.6&&D(4,8)/sz>.5,c:m[9]}});
+  const now=performance.now(),h=P[0];
+  if(!h){G.tip=[];G.pin=[];G.sw=[];G.fist=0;G.hist=[];if(G.E&&now-G.eT>250)endStroke();return}
+  if(mode==='free'){
+    if(h.e[0]&&!h.e[1]&&!h.e[2]){ // ☝ 손가락 돌리기 → 회전
+      G.tip.push(h.m[8]);if(G.tip.length>20)G.tip.shift();
+      if(G.tip.length>=12){const L=G.tip.length,mx=G.tip.reduce((s,p)=>s+p.x,0)/L,my=G.tip.reduce((s,p)=>s+p.y,0)/L;let sw=0,pa=null,r=0;
+        G.tip.forEach(p=>{const a=Math.atan2(p.y-my,p.x-mx);if(pa!==null){let d=a-pa;if(d>Math.PI)d-=2*Math.PI;if(d<-Math.PI)d+=2*Math.PI;sw+=d}pa=a;r+=Math.hypot(p.x-mx,p.y-my)/L});
+        if(Math.abs(sw)>2&&r>.02){vy=Math.max(-9,Math.min(9,sw/L*45));idle=0}}
+    }else G.tip=[];
+    G.pin.push({t:now,v:h.pinch});while(G.pin[0].t<now-700)G.pin.shift(); // 🤏 벌리기 → 가운데 이미지로 이동
+    if(now>G.cool&&h.pinch>.95&&Math.min(...G.pin.map(o=>o.v))<.5){G.cool=now+1500;G.pin=[];focusCenter()}
+  }else if(mode==='focus'){
+    if(h.n===0&&!h.L){G.fist=G.fist||now;if(now-G.fist>900){G.fist=0;closeFull();return}}else G.fist=0; // ✊ 닫기
+    if(h.e[0]&&h.e[1]&&!h.e[2]&&!h.e[3]){ // ✌️ 두 손가락을 상하좌우로 → 다른 사진 (왼쪽·위 = 다음, 오른쪽·아래 = 이전)
+      const t={x:(h.m[8].x+h.m[12].x)/2,y:(h.m[8].y+h.m[12].y)/2};
+      G.sw.push({t:now,x:t.x,y:t.y});while(G.sw[0].t<now-350)G.sw.shift();
+      const dx=t.x-G.sw[0].x,dy=t.y-G.sw[0].y;
+      if(now>G.cool&&Math.max(Math.abs(dx),Math.abs(dy))>.17){G.cool=now+800;G.sw=[];nav((Math.abs(dx)>Math.abs(dy)?dx:dy)<0?1:-1)}
+    }else G.sw=[];
+    const edgeNow=h.n>=2&&(h.edge||(G.E&&h.w<.8)); // 손날로 밀기 → 손날이 가로면 상하, 세로면 좌우로 픽셀 스트레치
+    if(edgeNow){G.eT=now;const px=h.c.x*W,py=h.c.y*H;G.hist.push({x:px,y:py});if(G.hist.length>5)G.hist.shift();
+      const o=G.hist[0],E=G.E,dx=px-o.x,dy=py-o.y,sp=Math.hypot(dx,dy);
+      const bx_=(h.m[9].x-h.m[0].x)*W,by_=(h.m[9].y-h.m[0].y)*H,bl=Math.hypot(bx_,by_)||1; // 손날 방향 = 손목→중지 뿌리
+      if(!E){if(sp>W*.02)G.E={ox:o.x,oy:o.y,ux:bx_/bl,uy:by_/bl,vert:Math.abs(by_)<=Math.abs(bx_),still:0}}
+      else{E.ux+=(bx_/bl-E.ux)*.3;E.uy+=(by_/bl-E.uy)*.3;
+        const ax=Math.abs(E.ux),ay=Math.abs(E.uy); // 손날이 가로(≈수평)면 상하 스트레치, 세로(≈수직)면 좌우 스트레치 (살짝 걸치면 유지)
+        if(E.vert&&ay>ax*1.3)E.vert=false;else if(!E.vert&&ax>ay*1.3)E.vert=true;
+        stretch(E.vert?E.oy:E.ox,E.vert?py:px,E.vert);
+        if(sp<W*.008){E.still=E.still||now;if(now-E.still>400)endStroke()}else E.still=0}
+    }else{if(G.E&&now-G.eT>250)endStroke();if(!G.E)G.hist=[]}
+  }
+}
+// ── 웹캠 + MediaPipe 손 인식
+let lm=null,fl=null,lastT=-1;
+// 👁 눈 깜빡임 → 랜덤 위치에 작은 정사각형 글리치
+function blinkCheck(r){
+  const c=r&&r.faceBlendshapes&&r.faceBlendshapes[0]&&r.faceBlendshapes[0].categories;if(!c)return;
+  const g=n=>(c.find(x=>x.categoryName===n)||{score:0}).score,v=(g('eyeBlinkLeft')+g('eyeBlinkRight'))/2,B=G.blink,now=performance.now();
+  if(!B.closed&&v>.28){B.closed=true;if(now-B.t>450){B.t=now;randomGlitch()}}
+  else if(B.closed&&v<.16)B.closed=false}
+function track(){if(cam.readyState>=2&&cam.currentTime!==lastT){lastT=cam.currentTime;const ts=performance.now();
+  if(lm)gesture(lm.detectForVideo(cam,ts).landmarks||[]);
+  if(fl&&mode==='focus')blinkCheck(fl.detectForVideo(cam,ts))}requestAnimationFrame(track)}
+async function startCam(){
+  try{
+    cam.srcObject=await navigator.mediaDevices.getUserMedia({video:{width:640,height:480,facingMode:'user'},audio:false});await cam.play();cam.style.display='block';
+    const V='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14',{HandLandmarker:HL,FilesetResolver:FR}=await import(V+'/vision_bundle.mjs'),fs=await FR.forVisionTasks(V+'/wasm');
+    const o=d=>({baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',delegate:d},runningMode:'VIDEO',numHands:2});
+    lm=await HL.createFromOptions(fs,o('GPU')).catch(()=>HL.createFromOptions(fs,o('CPU')));
+    track();
+    try{lmFace(V,fs)}catch(e){console.error(e)}
+  }catch(err){console.error(err);say('웹캠/손 인식을 쓸 수 없어요. 마우스로 사용해 주세요.')}}
+async function lmFace(V,fs){
+  const {FaceLandmarker:FL}=await import(V+'/vision_bundle.mjs'),o=d=>({baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',delegate:d},runningMode:'VIDEO',numFaces:1,outputFaceBlendshapes:true});
+  fl=await FL.createFromOptions(fs,o('GPU')).catch(()=>FL.createFromOptions(fs,o('CPU')))}
+startCam();
+(function loop(now){
+  if(anim){if(anim.t0==null)anim.t0=now;const t=Math.max(0,Math.min(1,(now-anim.t0)/anim.dur)),e=ease(t);
+    K.forEach(k=>st[k]=anim.from[k]+(anim.to[k]-anim.from[k])*e);
+    for(const m of anim.ms)applyTile(m.el,lerpK(m.from,m.to,e),true);
+    if(t>=1){const d=anim.done;for(const m of anim.ms)applyTile(m.el,m.to,false);anim=null;d&&d()}}
+  else if(mode==='free'&&!drag){st.ry+=vy;st.rx+=vx;vx*=.95;vy*=.95;
+    if(Math.abs(vx)<.02&&Math.abs(vy)<.02&&!reduce){idle++;if(idle>120)st.ry+=.12}}
+  apply();requestAnimationFrame(loop)})(performance.now());
+</script></body></html>
